@@ -8,9 +8,16 @@ app = Flask(__name__)
 def home():
     return "AI Prop Coach is running"
 
+@app.route("/test-telegram", methods=["GET"])
+def test_telegram():
+    result = send_message("✅ Telegram test from Railway is working.")
+    return jsonify(result)
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True, silent=True) or {}
+
+    print("WEBHOOK HIT:", data, flush=True)
 
     symbol = data.get("symbol", "NQ")
     direction = str(data.get("direction", "")).upper()
@@ -19,33 +26,19 @@ def webhook():
     notes = str(data.get("notes", ""))
 
     score = 65
-    if "sweep" in notes.lower():
-        score += 10
-    if "reclaim" in notes.lower():
-        score += 10
-    if "strong" in notes.lower():
-        score += 5
+    if "sweep" in notes.lower(): score += 10
+    if "reclaim" in notes.lower(): score += 10
+    if "strong" in notes.lower(): score += 5
 
-    if direction in ["BUY", "SELL"] and score >= 65:
-        msg = (
-            f"✅ APPROVED — {symbol} {direction}\n"
-            f"Setup: {setup}\n"
-            f"Score: {score}\n\n"
-            f"Entry: {price}\n"
-            f"Stop: Structure / ATR (wider)\n"
-            f"TP: 1.3R – 2R\n"
-            f"Trail: After +0.8R → ATR"
-        )
-        send_message(msg)
-        return jsonify({"status": "APPROVE", "score": score})
+    if direction in ["BUY", "SELL"]:
+        msg = f"✅ APPROVED — {symbol} {direction}\nSetup: {setup}\nScore: {score}\nEntry: {price}"
     else:
-        msg = (
-            f"❌ REJECTED — {symbol} {direction}\n"
-            f"Reason: Low score or invalid direction\n"
-            f"Score: {score}"
-        )
-        send_message(msg)
-        return jsonify({"status": "REJECT", "score": score})
+        msg = f"❌ REJECTED — {symbol}\nReason: invalid direction\nRaw: {data}"
+
+    result = send_message(msg)
+    print("TELEGRAM RESULT:", result, flush=True)
+
+    return jsonify({"received": data, "telegram": result})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
