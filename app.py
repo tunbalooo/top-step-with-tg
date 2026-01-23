@@ -1,45 +1,89 @@
 import os
+import threading
+import requests
 from flask import Flask, request, jsonify
-from telegram_bot import send_message
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "AI Prop Coach is running"
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 
-@app.route("/test-telegram", methods=["GET"])
+def _send_telegram(text: str):
+    if not BOT_TOKEN or not CHAT_ID:
+        print("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID", flush=True)
+        return
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+
+    try:
+        r = requests.post(url, json=payload, timeout=(2, 3))
+        print("Telegram:", r.status_code, r.text[:120], flush=True)
+    except Exception as e:
+        print("Telegram error:", str(e), flush=True)
+
+def send_telegram_async(text: str):
+    threading.Thread(target=_send_telegram, args=(text,), daemon=True).start()
+
+@app.get("/ping")
+def ping():
+    return "pong", 200
+
+@app.get("/test-telegram")
 def test_telegram():
-    result = send_message("✅ Telegram test from Railway is working.")
-    return jsonify(result)
+    send_telegram_async("✅ Telegram test from Railway is working.")
+    return jsonify({"ok": True}), 200
 
-@app.route("/webhook", methods=["POST"])
+@app.post("/webhook")
 def webhook():
-    data = request.get_json(force=True, silent=True) or {}
+    data = request.get_json(silent=True) or {}
+    print("TV WEBHOOK:", data, flush=True)
 
-    print("WEBHOOK HIT:", data, flush=True)
+    symbol    = data.get("symbol", "N/A")
+    direction = str(data.get("direction", "N/A")).upper()
+    price     = data.get("price", "N/A")
+    timeframe = data.get("timeframe", "N/A")
+    setup     = data.get("setup", "N/A")
 
-    symbol = data.get("symbol", "NQ")
-    direction = str(data.get("direction", "")).upper()
-    price = data.get("price", "")
-    setup = data.get("setup", "UNKNOWN")
-    notes = str(data.get("notes", ""))
+    sl    = data.get("sl", "N/A")
+    tp    = data.get("tp", "N/A")
+    grade = data.get("grade", "N/A")
+    score = data.get("score", "N/A")
+    notes = data.get("notes", "")
 
-    score = 65
-    if "sweep" in notes.lower(): score += 10
-    if "reclaim" in notes.lower(): score += 10
-    if "strong" in notes.lower(): score += 5
+    strategy = data.get("strategy", "")  # "APPROVED" for short format
 
-    if direction in ["BUY", "SELL"]:
-        msg = f"✅ APPROVED — {symbol} {direction}\nSetup: {setup}\nScore: {score}\nEntry: {price}"
+    # Short APPROVED format
+    if strategy == "APPROVED":
+        msg = (
+            f"✅ *APPROVED* — *{symbol}* *{direction}*\n"
+            f"Setup: `{setup}`\n"
+            f"Score: *{score}*\n"
+            f"Entry: `{price}`"
+        )
+
+    # Full SL/TP format
     else:
-        msg = f"❌ REJECTED — {symbol}\nReason: invalid direction\nRaw: {data}"
+        msg = (
+            f"📊 *TRADE ALERT*\n\n"
+            f"*{symbol}* — *{direction}*\n"
+            f"Setup: `{setup}`\n"
+            f"TF: `{timeframe}`\n\n"
+            f"Entry: `{price}`\n"
+            f"SL: `{sl}`\n"
+            f"TP: `{tp}`\n"
+            f"Grade: *{grade}*  Score: *{score}*"
+        )
+        if notes:
+            msg += f"\n\nNotes: _{notes}_"
 
-    result = send_message(msg)
-    print("TELEGRAM RESULT:", result, flush=True)
+    # Don’t block requests
+    send_telegram_async(msg)
+    return jsonify({"ok": True}), 200
 
-    return jsonify({"received": data, "telegram": result})
+@app.get("/")
+def home():
+    return "Bot running"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=8080)
